@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 
 try:
 	user = 'TweakInfoBot'
-	version = 'v66'
+	version = 'v71'
 	userAgent = 'OS X 10.11 - com.tsunderedev.tweakinfo - ' + version + ' - detects tweaks mentioned in /r/jailbreak and /r/iOSthemes (by /u/hizinfiz) '
 	subreddit = 'jailbreak'
 	subreddit2 = 'iOSthemes'
@@ -22,7 +22,7 @@ except Exception as e:
 
 replied = False
 
-footer = '\n---\n\n^(*beep boop I\'m a bot*)\n\n^(Type the name of a tweak enclosed in double brackets `[[tweak name]]` and I\'ll look it up for you.)\n\n^[[Info](http://www.reddit.com/r/hizinfiz/wiki/TweakInfoBot)] ^[[Source](https://github.com/hizinfiz/TweakInfoBot)] ^[[Mistake?](http://www.reddit.com/message/compose/?to=' + admin + '&amp;subject=%2Fu%2FTweakInfoBot%20feedback;message=If%20you%20are%20providing%20feedback%20about%20a%20specific%20post%2C%20please%20include%20the%20link%20to%20that%20post.%20Thanks!)]'
+footer = '\n---\n\n^(*bleep boop I\'m a bot*)\n\n^(Type the name of a tweak or theme enclosed in double brackets `[[tweak name]]` and I\'ll look it up for you.)\n\nI also reply to PMs!\n\n^[[Info](http://www.reddit.com/r/hizinfiz/wiki/TweakInfoBot)] ^[[Source](https://github.com/hizinfiz/TweakInfoBot)] ^[[Mistake?](http://www.reddit.com/message/compose/?to=' + admin + '&amp;subject=%2Fu%2FTweakInfoBot%20feedback;message=If%20you%20are%20providing%20feedback%20about%20a%20specific%20post%2C%20please%20include%20the%20link%20to%20that%20post.%20Thanks!)]'
 
 urllib.parse.uses_netloc.append("postgres")
 url = urllib.parse.urlparse(os.environ["DATABASE_URL"])
@@ -94,7 +94,7 @@ def checkComments(sub):
 					# double or even triple reply. This coincidence surprisingly happened very often.
 					cs = r.get_submission(com.permalink).comments[0]
 					if cs.replies == []: # if there are no replies
-						sendReply(message) # then leave a message
+						sendReply(message, com) # then leave a message
 					else:
 						for rep in cs.replies: # if there are replies, iterate through them
 							if str(rep.author) == "TweakInfoBot": # and one of them is from TweakInfoBot
@@ -102,7 +102,7 @@ def checkComments(sub):
 								print('        Already checked...')
 						# if there are replies but TweakInfoBot has not yet replied, send a reply
 						if replied == False:
-							sendReply(message)			
+							sendReply(message, com)			
 			# If a comment was already left, break out of replying to comments since they were checked the last run through
 			else:
 				print('        Already checked...')
@@ -138,7 +138,7 @@ def checkPosts(sub):
 			search = re.search(pattern, postBody, re.I|re.M)
 
 			if search:
-				search != re.search(spPattern, comBody, re.I|re.M)
+				search != re.search(spPattern, postBody, re.I|re.M)
 
 			# Leave a post if there was a request
 			if search:
@@ -153,7 +153,10 @@ def checkPosts(sub):
 						if com.is_root == True:
 							print('        Already checked...')
 						else:
-							sendReply(message)				
+							try:
+								pos.add_comment(message+footer)
+							except Exception as e:
+								print (Exception, str(e))			
 		# If a post was already left, break out of replying to posts since they were checked the last run through
 		else:
 			print('        Already checked...')
@@ -164,8 +167,48 @@ def checkPosts(sub):
 	c.execute('UPDATE posts SET LAST = %s WHERE SUB = %s', [first, sub])
 	db.commit()
 
+# Checks the inbox for new messages
+def checkInbox():
+	pms = r.get_unread(update_user=True, limit=1000)
+	message = ''
+
+	for pm in pms:
+		try:
+			author = pm.author.name
+		except:
+			pm.mark_as_read()
+			continue
+
+		if not pm.was_comment:
+			print('    Message from ' + author + '...')
+
+			search = re.search(pattern, pm.body.lower(), re.I|re.M)
+
+			if search:
+				for match in re.finditer(pattern, pm.body.lower(), re.I|re.M):
+					tweak = match.group()[2:-2]
+					tweak = getTweak(tweak)
+					message += tweak
+
+			else:
+				print('      Forwarding message to admin...')
+				r.send_message(admin, 'PM from /u/' + author, 'Message from /u/' + author + '\n\nSubject: ' + pm.subject + '\n\n---\n\n' + pm.body + footer)
+				message = 'I am a bot *bleep bloop*\n\nI received your message and I forwarded it to /u/' + admin + ' who will take a look at it when he gets a chance.\n\nIf it\'s urgent, you should PM them directly.'
+
+			message += footer
+
+			print ('      Replying to message from ' + author + '...')
+			pm.reply(message)
+		else:
+			print('    Comment from ' + author + '...')
+			print('      Forwarding message to admin...')
+			r.send_message(admin, 'Comment from /u/' + author, 'Message from /u/' + author + '\n\nSubject: ' + pm.subject + '\n\nContext: ' + pm.context + '\n\n---\n\n' + pm.body)
+
+		pm.mark_as_read()
+		time.sleep(1)
+
 # Send a reply, moved this into its own method because it showed up several times
-def sendReply(message):
+def sendReply(message, com):
 	try:
 		com.reply(message + footer)
 	except Exception as e:
@@ -174,7 +217,8 @@ def sendReply(message):
 # Tries to find information about a tweak
 def getTweak(tweak):
 	print ('        Getting info for ' + tweak)
-	tweakNoSpace = tweak.replace(' ', '')
+	tweakRemoveTrailing = removeTrailing(tweak).strip().lower()
+	tweakNoSpace = tweak.replace(' ', '').lower()
 	msg = '* **' + tweak + '** - Could not find info about this tweak/theme\n'
 	base = 'https://cydia.saurik.com/api/macciti?query='
 	query = [base+tweak, base+tweakNoSpace]
@@ -197,8 +241,8 @@ def getTweak(tweak):
 				name = removeTrailing(name).strip().lower()
 				nameNoSpace = name.replace(' ', '').lower()
 
-				if (name == tweak.lower()) | (name == tweakNoSpace.lower()) | (nameNoSpace == tweak.lower()) | (nameNoSpace == tweakNoSpace.lower()):
-					msg = genMessage(twk)
+				if (name == tweakRemoveTrailing) | (name == tweakNoSpace) | (nameNoSpace == tweakRemoveTrailing) | (nameNoSpace == tweakNoSpace):
+					msg = '* [**' + tweak + '**]' + genMessage(twk)
 					return msg
 
 	return msg
@@ -243,7 +287,7 @@ def genMessage(twk):
 	cos = getPrice(twk['name'])
 	des = str(twk['summary'])
 
-	msg = '* [**' + tweak + '**](' + link + ') -' + rep + ', ' + cos +  ' | ' + typ + ' | ' + des + '\n'
+	msg = '(' + link + ') -' + rep + ', ' + cos +  ' | ' + typ + ' | ' + des + '\n'
 
 	return msg
 
@@ -299,7 +343,7 @@ if __name__ == '__main__':
 			checkComments('hizinfiz')
 		if sys.argv[1] == 'inbox':
 			print('  RUNNING INBOX')
-			pass
+			checkInbox()
 
 	print('End TweakInfoBot for /r/' + subreddit + ' and /r/' + subreddit2)
 
